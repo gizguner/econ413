@@ -1,0 +1,702 @@
+---
+title: "Econ413-Project"
+author: "Group J"
+date: "05 02 2021"
+output: html_document
+---
+# Agricultural Policies in Turkey
+
+<style>
+body               {background-color : white; text-align: justify ; font-size : 180%;}
+h1                 {color : maroon ; font-family : Source Sans Pro; font-size :200%; font-weight:bold;}
+h2                 {color : darkred ; font-family : Source Sans Pro ; font-size : 150%; font-weight : bold;}
+p                  {color : black ; font-family : Source Sans Pro ; font-size : 100%;}
+table, th, td      {text-align: left; font-family : Source Sans Pro; font-size : 100%; margin-top : 20px}
+th,td              {border-bottom : 0.5px red;}
+</style>
+
+
+```{r, include = FALSE }
+library(stringi)
+library(data.table)
+library(pdftools)
+library(tesseract)
+library(rvest)
+library(readtext)
+library(stringr)
+
+
+
+AlreadyDownloaded=FALSE  ####### When TRUE it won't download the files again
+AlreadyRead=FALSE       ####### When TRUE it won't load the PDF's to the dataframe
+################################################################################
+
+Sys.setlocale("LC_ALL", locale="Turkish")
+
+
+
+
+# Creating a temporary working directory to store all files - including OCR generated png's
+################################################################################
+maindir=getwd()
+tempfolder="TEMPORARY"
+
+if(!dir.exists(tempfolder)){
+  dir.create(tempfolder)
+  dir.create(paste0(tempfolder,"\\downloads"))
+}
+setwd(tempfolder)
+################################################################################
+
+
+
+
+
+if(!AlreadyDownloaded){
+  
+  tesseract_download("tur")
+  
+  
+  # Function to get Links
+  getLink <- function(i){
+    a=html_attr(nodes[i], "style")
+    if(is.na(a))
+    {
+      url=html_attr(nodes[i], "href")
+      out=paste0("https://www.sbb.gov.tr", url)
+      return(out)
+    }
+    return(NULL)
+  }
+  
+  # Encode Turkish URL's to prevent 404 errors
+  ##############################################################################
+  URL_encode_turkish <- function(url)
+  {
+    a=c("Ç","ç","Ğ","ğ","İ","ı","Ö","ö","Ş","ş","Ü","ü")
+    b=c("%c3%87", "%c3%a7" ,"%c4%9e" ,"%c4%9f", "%c4%b0", "%c4%b1", "%c3%96", "%c3%b6", "%c5%9e", "%c5%9f", "%c3%9c", "%c3%bc")
+    for(i in 1:12) {
+      url=gsub(a[i], b[i], url)
+    }
+    return (url)
+  }
+  ##############################################################################
+  
+  
+  
+  doc <- html_node(read_html("https://www.sbb.gov.tr/yillik-programlar/"), "#post-34")
+  nodes<-doc %>%   html_nodes('a')
+  
+  
+  linkList <- lapply(c(1:length(nodes)), getLink)
+  rm("nodes","doc")
+  
+  
+  # Looping through the list and downloading each item
+  for(i in 1:length(linkList)) {
+    URL=linkList[i]
+    if(URL=="NULL") next
+    loc=stri_locate_last_fixed(URL,"/")
+    year <- substring(URL, loc[1]+1, loc[1]+4)
+    URL=toString(URL)
+    ext=tools::file_ext(sub("\\?.+", "", URL))
+    
+    destfile=paste0("downloads\\",year,".",ext)
+    cat("Downloading",year,"\n")
+    download.file(URL_encode_turkish(URL), destfile, mode="wb")
+  }
+  rm("ext","i","ListLength","year","URL","loc","linkList","desfile","AlreadyDownloaded","getLink","destfile","URL_encode_turkish")
+  
+}
+
+#Deleting the temporary generated png's (from OCR) incase they didn't automatically
+################################################################################
+DeleteTmpPng <- function(){
+  pngList<-list.files(pattern = ".png")  
+  for(j in 1:length(pngList))
+  {
+    unlink(pngList[j])
+  }
+}
+################################################################################
+
+
+
+if(!AlreadyRead)
+{
+  pdfList<-list.files(pattern = ".pdf",full.names = TRUE, recursive = TRUE)  
+  docList<-list.files(pattern = ".doc|.docx",full.names = TRUE, recursive = TRUE) 
+  
+  ## Creating the main empty data table
+  FullList <- data.table(year=integer(),contents=character())
+  
+  
+  
+  clean_characters <- function(input)
+  {
+    output<-gsub('[[:punct:] ]+',' ',input)
+    output<-gsub('õ|İ|ı','i',output)
+    output<-gsub('İ','i',output) #### sometimes İ fails to replace 
+    output<-gsub('ḡ','g',output)
+    output<-gsub('ç','c',output)
+    output<-gsub('ğ','g',output)
+    output<-gsub('ö','o',output)
+    output<-gsub('ş','s',output)
+    output<-gsub('ü','u',output)
+    return(output)
+  }
+  
+  totalPdf=length(pdfList)
+  ## Reading the Pds's
+  for(i in 1:totalPdf) {
+    cat("Reading PDF", i , "of" ,totalPdf,"\n")
+    PDF <- pdf_text(pdfList[i])
+    PDF <-  strsplit(PDF, split = "\r\n| ") 
+    contents <- unname(unlist(PDF))
+    contents<-paste(tolower(contents), collapse = " ")
+    
+    if(contents=="")
+    {
+      PDF <- pdf_ocr_text(
+        pdfList[i],
+        pages = NULL, ## NULL will make it download every page
+        opw = "",
+        upw = "",
+        language = "tur",
+        dpi = 600
+      )
+      PDF <-  strsplit(tolower(PDF), split = "\r\n| ")
+      contents <- unname(unlist(PDF))
+      contents<-paste(tolower(contents), collapse = " ")
+      contents=gsub("\r|\n", " ", contents)
+      # Delete OCR generated png files 
+      DeleteTmpPng()
+    }
+    contents=clean_characters(contents)
+    
+    
+    rm("PDF")
+    year=tools::file_path_sans_ext(basename(pdfList[i]))
+    
+    ddd <- data.table(year, contents)
+    FullList<-rbind(FullList, ddd,fill=TRUE)  
+    rm("ddd")
+  }
+  
+  ##Reading the docs
+  totalDoc=length(docList)
+  for(i in 1:totalDoc) {
+    cat("Reading DOC", i , "of" ,totalDoc,"\n")
+    
+    contents<-readtext(docList[i],encoding = "UTF8")
+    contents=contents[2]
+    contents=tolower(contents)
+    contents=gsub("\r|\n", " ", contents)
+    contents=clean_characters(contents)
+    
+    year=tools::file_path_sans_ext(basename(docList[i]))
+    
+    
+    ddd <- data.table(year, contents)
+    FullList<-rbind(FullList, ddd,fill=TRUE)  
+    
+  }
+  rm("ddd","i","pdfList","totalDoc","docList","contents")
+} ## Reading files finished
+
+##Counting words
+Word_Count <- function(word){
+  dat <- data.table(year=integer(),count=integer())
+  
+  word<-as.character(word)
+  for(i in 1:nrow(FullList))
+  {
+    selyear <- FullList[i,year]
+    out=str_count(FullList[i], word)[2]
+    dat<-rbind(dat, data.table(year =selyear, count = out),fill=TRUE)  
+  }
+  colnames(dat)[2] = word
+  return (dat[order(year)])
+}
+
+
+##Putting the counted words in a data table
+WordCountTable<- function(listofwords)
+{
+  aa = Word_Count(listofwords[1])
+  for (i in 2:length(listofwords))
+  {
+    bb = Word_Count(listofwords[i])
+    aa <- merge(x = aa, y = bb, by = "year", all.x = TRUE)
+  }
+  return (aa)
+}
+
+
+setwd(maindir)
+
+
+```
+
+## {.tabset .tabset-fade}
+
+### <span style="color:green"> Introduction </span>
+
+|   With open knowledge economy trend on the rise, investment in agriculture and agricultural innovation can be dismissed or viewed as inferior. However, agriculture is a vital sector in any economy, particularly in developing countries, to achieve inclusive, sustainable development and alleviate poverty. It also enhances rural development and employment, as well as provides manufactured goods for other industries.  Nevertheless, it remains an important resource for employment and income for Turkey. The share of agriculture value added as % of GDP in Turkey and middle income countries is presented in Graph 1 below Over the course of 1996-2020, there is a declining trend in value added as % of GDP.
+<p>&nbsp;</p>
+|   On this project, our aim is to analyze the annual state plans within 1996-2021 to observe and evaluate the shifts and certain policy changes in agriculture sector in Turkey. We mainly evaluate the producer support mechanisms, market-oriented transformation in agricultural policies, rural development and the impact and evolution of international trade and relations on agriculture.
+<p>&nbsp;</p>
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 1_", fig.width= 10.5, fig.height = 3.75}
+GDP_share <- WDI(country = c("TR", "XP") , indicator = "NV.AGR.TOTL.ZS", start = 1997, end = 2018)
+Turkey <- GDP_share[c(23:44), ]
+Middle <- GDP_share[c(1:22),]
+
+ggplot(Turkey, aes(x= year, y=NV.AGR.TOTL.ZS, color= "Turkey")) + 
+  geom_line(size=1) +
+  geom_line(data= Middle, aes(y = NV.AGR.TOTL.ZS, color= "Middle"), size=1) + theme_minimal() + 
+  labs(title= "Agriculture, Forestry, and Fishing, Value Added (% of GDP) ", x = "Year", y = "Value Added (%)", caption = "Source : WorldBank, National Accounts") +
+  guides(colour = guide_legend(""))
+
+```
+
+### <span style="color:green"> Agricultural Credits and Supports </span>
+```{r setup, include=FALSE}
+
+Credit <- getDataSeries(c("TP.KM.B33","TP.KREDI.L015"), CBRTKey = "t1BeysCQGf", 8)
+Credit <- Credit[, list(time,TP.KM.B33,TP.KREDI.L015)]
+names(Credit) <- c("Years","Total_Credit","Agriculture_Credit")
+clabsu1 <- labs(title = "The Share of Agriculture Credit on The Total Credit",
+               x= "Years", y = "Percentage of Agriculture Credit",
+               caption = "Source: Central Bank of the Republic of Turkey")
+
+clabsu2 <- labs(title = "Agriculture Credit",
+               x= "Years", y = "Agriculture(Million TL)",caption = "Source: Central Bank of the Republic of Turkey")
+
+Governmentsupport <- getDataSeries(c("TP.KB.GEN26"), CBRTKey = "t1BeysCQGf", 8)
+Governmentsupport <- Governmentsupport[, list(time,TP.KB.GEN26)]
+Governmentsupport
+names(Governmentsupport) <- c("Years","Agricultural_Support")
+clabsu3 <- labs(title = "Agricultural Support",
+               x= "Years", y = "Agricultural Support(Million TL)",
+               caption = "Source: Central Bank of the Republic of Turkey")
+
+```
+
+# <h1 align= "center"> _Government's Agriculture Support Policies_ </h1>
+
+```{r, warning = FALSE, echo = FALSE} 
+wordlist2 <- c("sulama", "gap", "dogrudan gelir destegi", "ziraat bankasi", "tarimsal destekleme")
+
+WordDataKredi <- WordCountTable(wordlist2)
+FreqDataKredi <- WordDataKredi[ , .(FreqSul = sulama/sum(sulama)*100,
+                                    FreqGAP = gap/sum(gap)*100,
+                                    FreqDGD = `dogrudan gelir destegi`/sum(`dogrudan gelir destegi`)*100,
+                                    FreqZB = `ziraat bankasi`/sum(`ziraat bankasi`)*100,
+                                    FreqTD = `tarimsal destekleme`/sum(`tarimsal destekleme`)*100)][ , Year := c(1996:2021)]
+```
+
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 2_", fig.width= 10.5, fig.height = 3.75}
+ggplot(FreqDataKredi, aes(x= Year, y=FreqTD, color= "Tarım Destekleme")) + geom_line(size =1) +
+  guides(colour = guide_legend("")) + theme_minimal() + labs(title = "Frequency of Words by Years(%)",
+                       x = "Year", y = "Frequency of Words(%)",
+              caption = "Source: TC. Strateji ve Bütçe Başkanlığı")
+```
+<p>&nbsp;</p>
+
+|   In the first part of our study, we will examine the agricultural support policies of governments by looking at annual programs between 1996-2020. First, we searched for the word "Tarımsal Destekleme" for policies. We will approach this issue in 2 different ways in terms of financing support to farmers with the Hazine ve Maliye Bakanlığı and loan opportunities to farmers offered through banks. 
+
+<p>&nbsp;</p>
+
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 3_", fig.width= 10.5, fig.height = 3.75}
+ggplot(Credit[Credit$Years >= 2005 & Credit$Years <= 2019], aes(x=Years)) + 
+  geom_line(aes(y = (Agriculture_Credit)/(Total_Credit), color= "Agriculture Credit"), size=1) + 
+  theme_minimal() +
+  scale_x_continuous(breaks=seq(2005,2019,1))+
+    clabsu1 + guides(colour = guide_legend(""))
+``` 
+
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 4_", fig.width= 10.5, fig.height = 3.75}
+ggplot(Credit[Credit$Years >= 2005 & Credit$Years <= 2019], aes(x = Years, y = Agriculture_Credit/1000, label = Agriculture_Credit, ))+
+  geom_bar(stat = "identity", color= "white", fill = "#b3de69") + 
+  theme_minimal() +
+  scale_x_continuous(breaks=seq(2005,2019,1))+
+  clabsu2
+```
+<p>&nbsp;</p>
+|   The first chart we see otal agricultural loans that are used in Turkey between the years 2005-2019. The second graph has the ratio to the total credits used in agricultural credits Turkey. When we look at the first graph, there was no increase in agricultural loans from 2005 to 2007, but a serious decrease was observed in the share of loans in total loans. While total credit amounts increased, agricultural loans remained stable. Then there was an increase in agricultural loans until 2011, and this increase is more than the increase rate of total loans. Therefore, the ratio of agricultural loans has also increased. Although there was an increase in agricultural loans after 2015, its ratio in total loans did not change. Here, we can say that it is parallel to the total loan growth rate.
+<p>&nbsp;</p>
+|   When we examine the decrease in the use of agricultural loans in 2005-2007, there is not a decrease in the total amount of agricultural loans, even an increase, and there is no decrease in the frequency of word usage, the reason for the decrease in the ratio of agricultural loans is the increase in the total loan amount. In 2008, with the cooperation of the European Union, the IPARD support program was started and it offered special loan rates to farmers with this program. When we look at our word table again, we see that our word usage frequency decreased considerably especially in the period of 2009-2014. And we can say that agricultural support has been pushed to the second plan as a government policy. We can see the impact of this policy on the ratio of agricultural loan amounts and total loan amounts.Later, word frequency started to increase again. The increase in this frequency was caused by many policies implemented at that time.In 2013, the Social Support Project in Rural Areas, carried out by the Sosyal Yardımlar Genel Müdürlüğü, offered 8-year interest-free loans with no repayment for the first 2 years. At the same time, with the 2013-2017 Stratejik Planı, cooperatives were tried to be used more effectively through low interest rates.
+
+<p>&nbsp;</p>
+
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 5_", fig.width= 10.5, fig.height = 3.75}
+ggplot(FreqDataKredi, aes(x= Year, y=FreqZB, color= "Ziraat Bankası")) + geom_line(size =1) +
+  guides(colour = guide_legend("")) + theme_minimal() + labs(title = "Frequency of Words by Years(%)",
+                       x = "Year", y = "Frequency of Words(%)",
+              caption = "Source: TC. Strateji ve Bütçe Başkanlığı") 
+```  
+<p>&nbsp;</p>
+
+|   The second word in the Government Supports part is the most important financing of agricultural loans, "Ziraat Bankası". When we look at our word frequency table, we can see that Ziraat Bank's usage frequency decreased after 1996-2002 as the most active years of Ziraat Bank.One of the reasons why Ziraat Bank is mentioned so much in these years is undoubtedly its penalty and its effect on the agricultural sector.The 2001 loan amount of Ziraat bank, which gave an average of 3 billion loans before 2000, decreased to TL 227 million due to the agricultural loan ban received by the IMF as a reason for duty losses.This ban lasted 3 years and dealt a great blow to the agricultural sector. After this process, although Ziraat bank became the leader in agricultural loans again, the private sector started to take this place. In addition, Ziraat Bank, which was transferred to the Varlık Fonu in 2017, started to compete with the private sector, and its role in agriculture started to decrease over time.
+
+<p>&nbsp;</p>
+
+# <h2 align= "left"> _Agricultural Support_ </h2>
+
+<p>&nbsp;</p>
+|   Secondly, governments can provide financing support to farmers, other than low interest loans.The aim here is to both encourage and support the farmer and increase production, and it can do this in many ways. It can support and increase the production of certain products by helping per production, create a conscious agricultural producer class by training farmers, or reduce costs and increase production with machine support.
+
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 6_", fig.width= 10.5, fig.height = 3.75}
+ggplot(Governmentsupport[Governmentsupport$Years >= 2006 & Governmentsupport$Years <= 2019], aes(x = Years, y = Agricultural_Support/1000, label = Agricultural_Support, ))+
+  geom_bar(stat = "identity", color= "white", fill = "#b3de69") + 
+  theme_minimal() +
+  scale_x_continuous(breaks=seq(2006,2019,1))+
+  clabsu3
+```
+  
+<p>&nbsp;</p>
+|   When we look at our agricultural support chart, there was a decrease only between 2008 and 2009. Here we see the effects of the crisis in 2008. In the crisis in 2013, the increase continued even though the increase was less than in other years. There is a steady increase in state support, the support has almost quadrupled from 2006 to 2019.
+  At the point of irrigation facilities, in 2005, 95 percent of DSI irrigation was transferred to businesses and private organizations in order to benefit more people. In addition, according to DSI data, the net irrigation area that was put into operation was 2.53 million hectares at the end of 2006, and increased to 2.81 million hectares by the end of 2012. In addition, as mentioned in the Tenth Development Plan, during the Ninth Development Plan Period (2007-2013), significant developments were experienced in land consolidation and irrigation infrastructure, especially in GAP.However, as a result of the drought in our country and impotence in the global market, agricultural imports have increased in our country. In fact, this project, which was carried out in the first years, did not have the desired effect with the crisis in the markets. The government has given particular importance to drip irrigation systems after the drought in these years.According to TURKSTAT data, the number of irrigation facilities, which was 293000 in 2012, reached 506000 in 2019.
+<p>&nbsp;</p>
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 7_", fig.width= 10.5, fig.height = 3.75}
+ggplot(FreqDataKredi, aes(x=Year, y=FreqSul, color= "Sulama")) + geom_line(size= 1) + geom_line(aes(y= FreqGAP, color= "GAP"), size = 1) +
+  theme_minimal() + guides(colour = guide_legend("")) + labs(title = "Frequency of Words by Years(%)",
+                       x = "Year", y = "Frequency of Words(%)",
+              caption = "Source: TC. Strateji ve Bütçe Başkanlığı") 
+
+```
+<p>&nbsp;</p>
+|   Turkey is given each semester to support irrigation projects in agricultural policy. When we look at our frequency of word usage, the decrease in irrigation word especially between 2009-2012 is noteworthy. But when we look at the word GAP, there is a serious increase in the same years. The GAP project, especially the irrigation works of the southeastern region, were realized under this project, and we can explain this decrease with the spread of this project.  
+<p>&nbsp;</p>
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 8_", fig.width= 10.5, fig.height = 3.75}
+ggplot(FreqDataKredi, aes(x=Year, y= FreqDGD, color= "Doğrudan Gelir Desteği")) + geom_line(size = 1) + theme_minimal() + 
+  guides(colour = guide_legend("")) + labs(title = "Frequency of Words by Years(%)",
+                       x = "Year", y = "Frequency of Words(%)",
+              caption = "Source: TC. Strateji ve Bütçe Başkanlığı")
+```
+<p>&nbsp;</p>
+|   Direct income payments are one of the support provided by the government to agriculture. This support can be done in two ways as decouping payments and compensatory payments. decoupling payments are payments independent of production, payments made by the state, taking into account the cultivation area and yield. Compensatory payments payments are support payments made for some products. It applies this kind of payments to the products that it wants to increase production for incentives. Before 2000, income support was tried to be created with different studies. Direct Income Support implementation , starting with a pilot in 2000, Turkey has become widespread throughout Turkey in 2001. In 2008, approximately 2.4 million farmers were paid on 15.8 million hectares. The application of Direct Income Support was terminated in 2009 and supports continued in the form of area and product based payments. When we look at our word usage frequency table, it overlaps with our data. The implementation , which started in 2001, reached the highest frequency of use in these years, and then in 2009, with the changes in the application, both the usage frequency and the amount of use changed.
+<p>&nbsp;</p>
+ 
+# <h2 align= "left"> _Agricultural Insurance_ </h2>
+
+<p>&nbsp;</p>
+|   Agricultural insurance is a policy tool to support producers and ensure stability in income in case of unexpected adverse shocks that most producers in agriculture sector are prone to. It is particularly significant within the context of climate crisis. As a developing country, Turkey due to its geographical position is estimated to be one of the countries to suffer impacts of climate change. According to Cakmak and Akder (2020), productivity loss due to climate change is estimated to be 6% and 9% by 2030 and 2040 respectively. While the first agricultural insurance was implemented in 1958, due to lack of demand and promotion the participation and willingness remained low. In accordance with the strategic plan, the law, effective by January 2006, aims to increase participation of producers, particularly in rural areas, in insurance system as a support mechanism and to increase network and cooperation between the state and the private sector in agriculture. In order to increase the incentives of producers to participate in the system the public subsidy on premium was set as 50%. 
+<p>&nbsp;</p>
+|   There were two new additional mechanisms: agricultural insurance pool under a management body called TARSIM and a farmer registration system. These two additions could be effective tools to monitor the efficiency and evaluation of the system as well as increase knowledge about the producers and rural areas that otherwise could be underrepresented. The agricultural insurance consists of crop, greenhouse, cattle, sheep & goats, poultry, aquaculture and beehives insurance, with crop insurance 
+While the outcomes and effectiveness of the insurance policy is to be augmented through further analysis, there is an increase in number of insurance beneficiaries. 15% of areas insured (around 1.6 million beneficiaries) by the end of 2018, as opposed to 3% in 2005. This trend can also be observed through the frequency graph. However, the agricultural insurance out of total insurance still remains low and is lower than that of other comparable countries. 
+<p>&nbsp;</p>
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 9_", fig.width= 10.5, fig.height = 3.75}
+csig <- (Word_Count("tarim sigorta"))
+Freqsig <- csig[, .(fresig = `tarim sigorta`/ sum(`tarim sigorta`)*100)]
+Freqsig <- Freqsig[, Year := c(1996:2021)]
+
+ggplot(Freqsig, aes(x= Year, y=fresig, color= "Tarım Sigorta")) + guides(colour = guide_legend("")) + geom_line(size=1) + labs(title = "Frequency of Words by Years(%)",
+                                                                   x = "Year", y = "Frequency of Words(%)",
+                                                                   caption = "Source: TC. Strateji ve Bütçe Başkanlığı") + theme_minimal()
+
+```
+<p>&nbsp;</p>
+
+
+### <span style="color:green"> Market-Orientation & Privatization in Agriculture </span>
+
+# <h1 align= "center"> _Market-Orientation & Privatization in Agriculture_ </h1>
+|   The mainstream economic theory and empirical studies support the view that private firms operate more efficiently than state enterprises due to competition. However, without competition, decreasing the size of government may end up transforming "monospoly" to monopoly, hence lead to adverse effects and inefficiency. Over the last decades, significant policy changes in agriculture in Turkey include reorganization in structure of agricultural institutions and decline in and/or elimination of state intervention. 
+<p>&nbsp;</p>
+|    Neoliberal, market-oriented transformation of agriculture in Turkey dates back to 1980's. Under the guidance of World Bank, the Privatization Master Plan was prepared and implemented in 1986 which declared the privatization would be concluded by the end of 2004. While the priorities and areas to further focus was set accordingly, the ARIP and DIS program of IMF stand-by deal increased the speed of transformation and privatization. Pre-privatization period, the agricultural SOEs operated in various fields in agriculture such as: input production, distribution, production and marketing & organization. 
+
+List of SOEs in agriculture included in Privatization Master Plan is included in Table 1. below:
+<p>&nbsp;</p>
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_table 1_", fig.width= 10.5, fig.height = 3.75}
+Enterprise <- c("CAYKUR, General Directorate of Tea Enterprises", "TEKEL, State Monopoly of Alcohol and Tobacco","TSFAS, Turkey Sugar Factories","SEK, Milk Industry Association", "YEMSAN, Fodder Industry ", "Et Balık Kurumu, Meat and Fish Association","Turkiye Gubre AS, Turkey Fertilizer Industry")
+Year <- c("Enlisted","2001 to 2008","Enlisted", "1995","1993-1995", "1995", "1999")
+DT <- data.frame(Enterprise, Year, stringsAsFactors=FALSE)
+#Privatization of SOEs in Agriculture
+knitr::kable(
+  DT, caption = 'Table 1: Main SOEs in Food & Agriculture included in Privatization Plan '
+)
+```
+<p>&nbsp;</p>
+# <h2 align = "left" > _Law of Sugar_ </h2>
+
+|   With 2001 Law of Sugar is implemented to regulate the sugar regime, the procedures and principles to sugar production, conditions and methods of pricing as well as marketing. Following the law, series of changes in sugar and sugar beet production and distribution were implemented. TSFAS was restructured and partly privatized. Such structural change was to prepare the preconditions for liberalization and minimization of direct government support through price mechanism and additionally entailed quotas in sugar beet production. The aim of quotas was to ensure efficiency since sugar production via sugar beet is relatively costly and less competitive after trade liberalization.
+
+The sugar beet production over the period has declined in total. Furthermore, instead, the policy shifted towards production of starch based sugar as a substitute and the regulation allowed the use of 10% to 15% of sweeteners, as opposed to 2% that of developed countries.
+<p>&nbsp;</p>
+
+# <h2 align = "left" > _Law of Tobacco_ </h2>
+
+|   The gradual privatization of TEKEL was first mentioned in 5th 5-Year Development Plan and was realized over the course of 2001-2008 period. In 2002, TAPDK, as an indepent agent as a regulator was established, much similar to Sugar Industry. While the selling of assets began in 2001, it took several years, only after it lost its monopoly power, that it was fully privatized in 2008. With implementation of law of tobacco, price support mechanism was abandoned and tobacco producers had increasingly turned into wage-earners. Over the period of 2002-2018, the number of producers declined from 405.000 to 56.000 as a result. 
+
+The annual tobacco production out of total world production  is given in _graph 10_ below:
+<p>&nbsp;</p>
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 10_", fig.width= 10.5, fig.height = 3.75}
+
+dt <- fread("https://bin.jvnv.net/file/0fEHZ.csv")
+dt <- dt[, list(Year,Value)]
+
+Turkey <- dt[c(1:24),]
+World <- dt[c(25:48),]
+
+data_1 <- data.frame(Turkey, World)
+data_1$ Year.1 <- NULL
+
+names(data_1) <- c("Years","Tobacco_Turkey","Tobacco_World")
+
+
+clabsg1 <- labs(title = "Tobacco Production in Turkey, % of Total World Production",
+               x= "Years", y = "Quantity Tobacco Production,  Turkey", Source= "Food and Agriculture Databse (2021)")
+            
+            ggplot(data_1, aes(x=Years)) + 
+              geom_line(aes(y = (Tobacco_Turkey)/(Tobacco_World), colour="Tobacco Production"), size=1) + 
+              theme_minimal() +
+              scale_x_continuous(breaks=seq(1996,2019,1))+
+              clabsg1 + guides(colour = guide_legend("")) + scale_color_manual(values= "skyblue2")
+            
+```
+<p>&nbsp;</p>
+|   With diminishing price support mechanism available, producers lost their competitiveness against the exported goods, therefore it suggests that tobacco producers might have suffered. 
+
+Overall the case of Law of Sugar and Tobacco as well as privatization in case of Turkish agriculture and food sector suggest that a proper regulation and support mechanism were lacking throughout the market orientation transformation process and the data suggests this might have impacted the producers and the sector badly. A further data analysis can be useful for ex-post evaluation. 
+<p>&nbsp;</p>
+
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 11_", fig.width= 10.5, fig.height = 3.75}
+
+aa <- c("tekel", "tutun", "seker") 
+tt <- WordCountTable(aa)
+FreqData <- tt[, .(freqtek = tekel / sum(tekel)*100,
+                   freqsek = seker / sum(seker)*100,
+                   frtut = tutun/sum(tutun)*100)]
+FreqData <- FreqData[, Year := c(1996:2021)]
+
+ggplot(FreqData, aes(x= Year)) +
+  geom_line(aes(y = freqtek), color = "darkred") + 
+  geom_line(aes(y = frtut), color="steelblue") +
+  geom_line(aes(y = freqsek), color="orange") + theme_minimal() + labs(title = "Frequency of Words by Years (%)",
+                                                                       x = "year", y = "Frequency of words (%)",
+                                                                       caption = "Source : TC. Strateji ve Bütçe Başkanlığı")
+
+```
+<p>&nbsp;</p>
+|   Qualitative frequency analysis also reflects the market oriented policy transformation as well as privatization in agricultural enterprises. Following 2001 the "sugar" and "tobacco" mentions show decrease significantly. TEKEL ve tobacco show similar patterns (r=0.9) as expected and the mentions remain slightly stable after 2008 when the assets were fully privatized.
+<p>&nbsp;</p>
+
+### <span style="color:green"> Rural Development </span>
+# <h1 align= "center"> _Rural Development_ </h1>
+
+```{r, include=FALSE, warning = FALSE, echo=FALSE}
+library(CBRT)
+library(forecast)
+library(WDI)
+myCBRTKey <- "ha20CXJ1Qe"
+getAllCategoriesInfo(myCBRTKey)
+#Rural Population
+Rural_population <- WDI(country = "TR", indicator = "SP.RUR.TOTL.ZS", start = 1996, end = 2020)
+names(Rural_population)[3] <- "rural_population"
+title1 <- labs(title = "Rural Population Percentage of Total Population",
+               x = "", y = "rural population",
+               caption = "Source: World Bank")
+ruralpopulation <- ggplot(Rural_population, aes(x = year, y = rural_population, fill = rural_population)) + 
+  geom_bar(position = position_dodge(), stat = "identity") + theme_minimal()+ title1
+title2 <- labs(title = "Urban Population percentage of Total Population",
+               x = "year", y = "urban population",
+               caption = "Source : World Bank")
+#Urban population
+WDIsearch("urban population")
+Urban_population <- WDI(country = "TR", indicator = "SP.URB.TOTL.IN.ZS", start = 1996, end = 2020)
+names(Urban_population)[3] <- "urban_pop"
+urbanpop <- ggplot(Urban_population, aes(x = year, y = urban_pop, fill = urban_pop)) + geom_bar(positin=position_dodge(), stat = "identity") +
+  title2 + theme_minimal()
+#Agricultural Credit for Rural Development
+kırsal_kalkınma <- getDataSeries("TP.KB.GID075", start = "1996-01-01", end = "2020-01-01", freq = 8)
+names(kırsal_kalkınma)[2] <- "ruraldevelop"
+title3 <- labs(title = "Agricultural Credits for Rural Development",
+               x = "year", y = "rural development credits",
+               caption = "Source : Central Bank of the Republic of Turkey")
+rural_credit <- ggplot(kırsal_kalkınma, aes(x = time, y = ruraldevelop/1000)) + geom_line(size = 0.5, color = "blue") + scale_y_log10() + title3 + theme_minimal() + geom_vline(xintercept = c(2009,2015), color = "light blue", size = 1) + annotate("text", x=2009, y = 21180.906, label="IPARD-I") + annotate("text", x=2015, y=20, label="IPARD-II")
+#Agricultural Employment vs Non-Agricultural
+tarim_ist <- getDataSeries("TP.RS.YBB02.TOP", start = "1996-01-01", end = "2020-01-01", freq = 8)
+names(tarim_ist)[2] <- "agricultural_employment"
+tarim_disi_istihdam <- getDataSeries("TP.TIG08", start = "1996-01-01", end = "2020-01-01", freq = 8)
+names(tarim_disi_istihdam)[2] <- "non_agri"
+non_agri_total <- merge(tarim_disi_istihdam,tarim_ist, by = "time")
+title4 <- labs(title = "Agricultural vs Non-Agricultural Employment",
+               x = "year", y = "agricultural employment",
+               caption = "Source : Central Bank of the Republic Turkey")
+agrivsnon <- ggplot(non_agri_total, aes(x = time)) + geom_bar(aes(y = agricultural_employment, fill = "agri"), stat = "identity", position=position_dodge()) + scale_fill_manual(values = "light blue") + geom_line(aes(y = non_agri*150, color = "non_agri"), size = 2) + scale_color_manual(values = "#154267") + 
+  theme_minimal() + theme(legend.title = element_blank()) + 
+  title4 + scale_y_continuous(sec.axis = sec_axis(~ ./150 , name = "non-agricultural employment(%)")) + theme(legend.position = "bottom")
+#Food Production
+WDIsearch("food production index")
+Food_production <- WDI(country = "TR", indicator = "AG.PRD.FOOD.XD", start = 1996, end = 2020)
+names(Food_production)[3] <- "foodprod" 
+title5 <- labs(title = "Food Production", 
+               x = "year", y = "food production",
+               caption = "Source : World Bank")
+
+foodproduction <- ggplot(Food_production, aes(x = year, y = foodprod)) + geom_line(size = 1.5, color = "#80b1d3") + theme_minimal() +
+  geom_vline(xintercept = c(2009,2014), color = "#152099", size = 1) + annotate("text", x=2009, y = 108.8, label="IPARD-I") + 
+  annotate("text", x = 2014, y = 133.66, label = "IPARD-II") + title5
+#Women Employment
+women_agr <- getDataSeries("TP.RS.YBB02.AIL", start = "1996-01-01", end = "2020-01-01", freq = 8)
+names(women_agr)[2] <- "women_emp"
+title6 <- labs(title = "Women Employment in Agriculture",
+               x = "year", y = "women employment",
+               caption = "Source : Central Bank of the Republic of Turkey")
+women_ <- ggplot(women_agr, aes(x = time, y = women_emp, color = women_emp)) + geom_line(size = 1.5) + title6 + theme_minimal()
+
+```
+
+|     Rural Development is one of the prominent issues in developing countries as in Turkey. The foremost problem of countryside is poverty in today’s world. Since lots of people live in countryside of developing countries and they are struggling poverty, more effective strategies are required to fulfill the needs of rural population and more effective rural development policies are necessary in order to achieve sustainable development goals. Agricultural sector which is basic livelihood of rural is mostly affected by the globalization and liberalization policies as a requirement of this in Turkey. Besides  the poverty, rural-urban migration is another important issue that rural development policies have to solve. Since the rural-urban migration continues, rural population is decreasing, and the countryside remains perpetually rural. Furthermore, average age increases due to increase in rural-urban migration. Decrease in agricultural production which is caused by the migration causes an increase in imports. Particularly after 2005 in Turkey, several innovations have taken place in rural and regional development policies by the impact of full membership negotiations with European Union.
+<p>&nbsp;</p>
+<br>
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 12_", fig.width= 10.5, fig.height = 3.75}
+ruralpopulation
+
+```
+</br>
+<p>&nbsp;</p>
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 13_", fig.width= 10.5, fig.height = 3.75}
+urbanpop
+
+```
+<p>&nbsp;</p>
+|   In Turkey, there is always a decrease in percentage rural population to total population since 1996. While the rural population rate is 35% in 1996, this rate is getting less year by year and the rural population rate is less than 25% in 2020 as shown in the _graph 12_.One of the biggest factors in the decrease of the rural population is the continuous increase in the urban population, namely urbanization. _graph 13_ indicates that there is constant increase in urban population in Turkey since 1996 and while the urban population rate was 63% in 1996, the rate is more than 75% in 2020. Every year for the rural population in Turkey is decreasing too much and urbanization are increasing the average age of the rural population.
+<p>&nbsp;</p>
+# <h2 align= "left"> _IPARD-I and IPARD-II_ </h2>
+
+|   After 2003, period of IPARD programme was the significant part of the Rural Development policies, among the Rural Development policies prepared for harmonization with the EU. Furthermore, IPARD is different from the other programmes, because IPARD configures rural development and agricultural sector as a whole. This programme moves parallel to the mainstream rural development paradigms and adopts similar approaches, principles and methods. </br>
+|   IPARD-I programme has been put into effect in February 25,2008 by European Commission and December 30,2009 by Turkey. Applications proceeded on approximately 20 cities until end of the 2012, and it was expanded to 42 cities in 2013. Moreover, IPARD-I programme which provided 1 Billion 45 Million Euro grant support in total and provided employment for 57 thousand people was completed at the end of 2016. On the other hand, IPARD-II programme covering from 2014 to 2020 was approved in 2015 by European Commission and implemented in 2015 in Turkey. This programme was similar to the IPARD-I, IPARD-II also provided 1 Billion 45 Million Euro grant support to producers in agriculture and farming sector. </br>
+
+<p>&nbsp;</p>
+
+```{r ,fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 14_", fig.width= 10.5, fig.height = 3.75}
+rural_credit
+```
+</br>
+<p>&nbsp;</p>
+```{r , fig.align = 'center', echo = FALSE, warning = FALSE, fig.cap = "_graph 15_", fig.width = 10.5, fig.height = 4}
+agrivsnon
+```
+|   The _graph 14_ indicates that while there is not any agricultural credit for rural development until 2008, there is a big shift from 2008 to 2009 with respect to agricultural credits. The reason of this big shift might be the IPARD-I programme. Since IPARD programme was implemented in 2009 in Turkey, the agricultural credits line is steeper than before. IPARD-II was implemented in 2015 in Turkey, therefore there is an another big shift in agricultural credits for rural development in 2015. With these two programmes, more agricultural credits for rural development was provided and it was aimed to increase production. Furthermore, while comparing the agricultural and non-agricultural employment, _graph 15_ shows that there is also an increase in agricultural employment and a decrease in non-agricultural employment. IPARD programme provided more employment in those years, the shift is also caused by the IPARD programme which was implemented in 2009 in Turkey.
+</br>
+<p>&nbsp;</p>
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 16_", fig.width = 10.5, fig.height = 4}
+foodproduction
+```
+<p>&nbsp;</p>
+|   In the _graph 16_, the food production, which had been in a fluctuating course in previous years, became more sustainable with the implementation of IPARD-I and increased continuously until 2014. With the implementation of IPARD-II, food production has started to rise again. As a result of this, as can be seen in the IPARD-I and IPARD-II graphs, it yielded positive results, and increased the incentive to agriculture by giving agricultural credits for rural development, and at the same time increased agricultural employment, so food production increased in parallel of these.
+<p>&nbsp;</p>
+# <h2 align = "left" > _Seventh Development Plan_ </h2>
+|   Seventh Development Plan covering the period of 1996-2000 mentioned that since rural development cannot be based on continuity and permanence, the difference in the welfare level between rural and urban was gradually widening and the rural population was concentrated in cities. In the Sixth Five-Year Development Plan, it is also mentioned that the Special District Administrations planned to be established in rural areas to increase the efficiency of local services could not be established. </br>
+
+<p>&nbsp;</p>
+# <h2 align = "left" > _Eighth Development Plan_ </h2>
+|   Eighth Development Plan covering the period of 2001-2005 aimed to increase income and employment by mobilizing local potential within the framework of the principle of sustainable development.  Rural Development targets are defined as increasing employment, improving human capital, increasing the income of the rural population, decreasing poverty with improving the quality of life, supporting effective organizations and supporting participation. The Eight Development Plan adopted supporting entrepreneurs in order to overcome poverty in rural areas and physical planning studies has been adopted in areas where regional planning was made in order to increase income and to reduce inter-regional development differences. In this context, it was aimed to increase the quality of life by increasing income and employment and improving infrastructure services in the policies to be implemented. </br>
+
+<p>&nbsp;</p>
+# <h2 align = "left" > _Ninth Development Plan_ </h2>
+|   Ninth Development Plan covering the period of 2007-2013 handled the rural development under the context of regional development. It was aimed to make central-level policies more harmonious and more effective, to increase institutional capacity at local level and to accelerate rural development. Regarding the improvement of income distribution in rural areas, especially the situation of women employed as family workers, it was mentioned in this plan and it was stated that women became vulnerable to poverty and social exclusion risks by staying out of economic life. The necessity of an integrated regional development policy that includes differentiated measures according to the problems and potentials of the regions in order to eliminate the ongoing socio-economic and income level imbalances between rural and urban settlements was also mentioned. Within the scope of the Ninth Development Plan, rural development policies were implemented together with agricultural policies in a way to ensure the development of rural infrastructure and diversification of economic activities. </br>
+<p>&nbsp;</p>
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 17_", fig.width = 10.5, fig.height = 4}
+women_
+```
+<p>&nbsp;</p>
+|   Since the Ninth Development Plan emphasises on the women employment in agriculture more, the _graph 17_ indicates that women employment in agriculture increased between years of 2010 and 2013 and it had the most values among all years. This shift and increase are about the Ninth Development Plan. 
+<p>&nbsp;</p>
+
+# <h2 align = "left" > _Tenth Development Plan_ </h2>
+|   Tenth Development Plan covering the period of 2014-2018 has determined the main objective of bringing the minimum welfare level in rural areas closer to the average of country welfare, under the heading of rural development. In this plan, diversifying the production and employment structure of the rural economy with non-agricultural economic activities, using rural development supports to improve competitiveness in agriculture, strengthening the service provision capacity of the public at the local level and developing an innovative model, developing production and income-based support instruments, and preparing district-based local development programs has been made. This program more emphasized on local characteristics and diversifications of the rural economy.
+<p>&nbsp;</p>
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 18_", fig.width = 10.5, fig.height = 4}
+wordlistt <- c("kirsal kalkinma", "tarimsal istihdam", "kentlesme", "kurumsal kapasite") 
+word_data <- WordCountTable(wordlistt)
+Freq_Data <- word_data[, .(FreqKir = `kirsal kalkinma`/sum(`kirsal kalkinma`)*100,
+                           FreqTar = `tarimsal istihdam`/sum(`tarimsal istihdam`)*100,
+                           FreqKent = kentlesme / sum(kentlesme)*100,
+                           FreqKur = `kurumsal kapasite`/sum(`kurumsal kapasite`)*100)]
+Freq_Data <- Freq_Data[, year := c(1996:2021)]
+clabs_kir <- labs(title = "Frequency of Words by Years (%)",
+                  x = "year", y = "Frequency of words (%)",
+                  caption = "Source : TC. Strateji ve Bütçe Başkanlığı")
+MyColors <- c("olivedrab4", "violetred3", "royalblue2", "orange2")
+Kirkalfreq <- ggplot(Freq_Data, aes(x = year)) + geom_line(aes(y = FreqKir, color = "Kirsal Kalkinma"), size = 1) + 
+  geom_line(aes(y = FreqTar, color = "Tarimsal İstihdam"), size = 1) +
+  geom_line(aes(y = FreqKent, color = "Kentlesme"), size = 1) + 
+  geom_line(aes(y = FreqKur, color = "Kurumsal Kapasite"), size = 1) + 
+  theme_minimal() + scale_color_manual(values = MyColors) + guides(colour = guide_legend("")) + clabs_kir
+Kirkalfreq
+
+```
+<p>&nbsp;</p>
+|   The most mentioned years of agricultural employment are between 2000 and 2003. Since the Eighth Development Plan aims to increase the income of the rural areas and increase agricultural employment, it was an outcome that we expected much emphasis on agricultural employment between 2000 and 2003. In addition, although urbanization is a word that is mentioned almost every year, it is mentioned mostly between 2002 and 2003. As mentioned in the Seventh Development Plan, urbanization was of great importance at that time, since the difference in welfare between the rural areas and the city was high and this was the focus of this development plan. Therefore, it is normal to talk about urbanization a lot in these years. Rural Development is most frequently mentioned in 2008 and 2009. The year 2008 and 2009 hosted two major revolutionary applications for agriculture, IPARD-1 and IPARD-2. As the IPARD programs started to be implemented in 2008-2009, rural development has become very important in these years and concerns about this issue have increased. Therefore, IPARD programs are the reason why rural development was mentioned too much in 2008-2009 and this is a result we expected. While Institutional Capacity was mentioned very little in previous annual plans, it was mostly mentioned in 2014. In the ninth development plan, it was emphasized that institutional capacity should be increased locally. As the ninth development plan covers the period 2007-2013, it is another result that we expect institutional capacity to be mentioned the most in 2014, and we see a focus on institutional capacity.
+<p>&nbsp;</p>
+### <span style="color:green"> International Agreements on Agricultural Trade Liberalization </span>
+# <h1 align= "center"> _International Agreements on Agricultural Trade Liberalization_ </h1>
+<p>&nbsp;</p>
+|   Throughout history, liberalization acts have been a part of world economic conjuncture. Starting with the late 1960’s, acceleration of liberalization on trade and financialization have been an inevitable part of the international policies. The international institutions, which are mostly under the dominance of hegemon powers of the world, have been working through to support and promote these liberal acts by implementing various of rules and requirements via international agreements. These agreements influence many sectors including agriculture as well. As for Turkey, many international agreements on trade took place. Those agreements provide many opportunities as well as threads for agriculture sector in Turkey. Many international institutions such as World Trade Organization, IMF, World Bank and UN Committee conducted various agreements with Turkey on agriculture to promote mutual benefits. 
+<p>&nbsp;</p>
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 19_", fig.width = 10.5, fig.height = 4}
+wordlist=c("serbestlesme", "serbest ticaret anlasma", "gumruk vergi", "tarife")
+WordData=WordCountTable(wordlist)
+
+FreqData1 <- WordData[ , .(FreqSer = serbestlesme/sum(serbestlesme)*100,
+              FreqSTA = `serbest ticaret anlasma`/sum(`serbest ticaret anlasma`)*100,
+              FreqGV = `gumruk vergi`/sum(`gumruk vergi`)*100,
+              FreqTar = tarife/sum(tarife)*100)]
+FreqData1 <- FreqData1[ , Year := c(1996:2021)]
+
+clabsi <- labs(title = "Frequency of Words by Years(%)",
+                       x = "Year", y = "Frequency of Words(%)",
+              caption = "Source: TC. Strateji ve Bütçe Başkanlığı") 
+MyColors <- c("olivedrab4", "violetred3", "royalblue2", "orange2")
+ggplot(FreqData1, aes(x=Year, y=FreqSer, color = "Serbestleşme")) + geom_line(size = 1) + 
+  geom_line(data = FreqData1, aes(y= FreqSTA, color= "Serbest Ticaret Anlaşma"), size= 1) +
+  geom_line(data = FreqData1, aes(y = FreqGV, color= "Gümrük Vergi"), size = 1) + 
+  geom_line(data = FreqData1, aes(y = FreqTar, color= "Tarife"), size= 1) + 
+  theme_minimal() + clabsi + guides(colour = guide_legend("")) + scale_color_manual(values = MyColors)
+```
+<p>&nbsp;</p>
+|   In the _graph 19_ above, the frequencies of the keywords are presented. The keywords are chosen to represent the focus on liberalization related concerns. As we can see in the graph, the concerns of liberalization, free trade agreements, and tariffs were peaked in the period from 1999 to 2005 relative to other periods. This would be an indication of some policy changes that took place within this period. Also, when we look at the “customs duties” word, it peaked in 1996 and the focus on this term remained high until late 2000’s. Based on these information, possible policy changes that reflect these policy concerns will be investigated through this section. 
+<p>&nbsp;</p>
+
+# <h2 align = "left" > _Agreement on Agriculture - Uruguay Round of Trade Negotiations (URTN)_ </h2>
+<p>&nbsp;</p>
+|   URTN was signed in 1993 with World Trade Organization and went in effect in 1994. Its target was to liberalize agricultural production and trade conditions. In this context decrease in domestic support, tariffs, quotas and export subsidies were among URTN’s purposes to reduce the deteriorations in world trade structure. Many developing countries, including Turkey, realized their obligations within the given 10-year period from 1995 to 2004. Turkey decreased its tariff rates by 25% in average to meet the requirements of URTN in this period. By realizing this kind of obligations , countries that signed the agreement reduced the level of protections of their domestic markets and forced to be a part of international competition in agriculture sector. Entrance in agricultural trade markets became more transparent. Developed countries gained favor of this agreement while developing countries such as Turkey faced with new challenges in their agricultural trade structure. In the _graph 20_ below, applied tariffs rates of primary sector is presented. As we can see from the graph, there has been a significant tariff decline in 1999. The tariffs rates of primary sector were decreased from 5.45% in 1999 to 2.73% in 2002. 
+<p>&nbsp;</p>
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 20_", fig.width = 10.5, fig.height = 4}
+Tariffs <- WDI(country = "TR", indicator = "TM.TAX.TCOM.WM.AR.ZS", start = 1996, end = 2011)
+
+clabsi2 <- labs(title = "Tariff Rate, Applied, Primary Products (%)",
+               x = "Year", y = "Tariff Rate",
+               caption = "Source: World Bank")
+ggplot(Tariffs, aes(x= year, y=TM.TAX.TCOM.WM.AR.ZS, color= "Tariff Rate")) + geom_line(size=1) + theme_minimal() + clabsi2 + scale_color_manual(values = "royalblue2") + guides(colour = guide_legend("")) + geom_vline(xintercept = 1999, color = "light blue", size = 1) + annotate("text", x=1999, y = 5.45, label="         1999")
+```
+<p>&nbsp;</p>
+
+# <h2 align = "left" > _Customs Union Agreement (CUA)_ </h2>
+<p>&nbsp;</p>
+|   CUA, which was signed with European Union in 1995,  is another agreement that was mainly targeting trade liberalization policies. The purpose of CUA on agricultural sector was to create a trade which was based on free flow of agricultural goods between EU and Turkey. CUA generated both positive and negative impacts on Turkey’s agricultural sector. In the first years of the agreement, while Turkey’s share in UN agricultural imports was increased, it began to decline after 2000’s. The main reason for that was the number of members of UN was increased from 15 to 28 by 2000’s. The new members were in rival position against Turkey. The increased population of UN became a greater market for Turkey yet, UN began to import many goods from these new countries.
+<p>&nbsp;</p>          
+|   When we focus on the agricultural trade balance, Turkey run both agricultural trade deficit and surplus from 1980 to 2017. Thus the position of Turkey as being net exporter or net importer of agricultural goods has been changed through this period. After CUA was signed, Turkey ran agricultural trade deficits except for the years of 1998, 1999, 2001, 2002, 2005 and 2006. When we reached upon 2017, the value of agricultural exports was measured as 5.7 billion dollars while the value of agricultural imports was measured as 9 billion dollars. Thus, although Turkey was in position of next exporter of agricultural goods just after CUA was signed, it became a net importer of agricultural goods through time. The reasons for this agricultural trade deficit are mostly due to increase in imports of livestock, agricultural inputs and forage plants. 
+<p>&nbsp;</p>        
+|   In addition to all, Turkey’s imports of agricultural goods from EU increased in both quantity and proportion after 2000’s. The main reason for this situation is that EU also signed Agreement on Agriculture with World Trade Organization in the almost same year as CUA.  Thus, EU raised its customs duties of agricultural goods yet, Turkey was not able to do such thing and affected negatively from this situation. Also, the addition of 10 new members to EU created a negative impact for Turkey since those countries were competitors of Turkey as we mentioned before. 
+<p>&nbsp;</p>
+
+```{r, fig.align='center', echo = FALSE, warning = FALSE, fig.cap = "_graph 21_", fig.width = 10.5, fig.height = 4}
+Export <- getDataSeries("TP.DT.TAR.IH.I", start = "1989-01-01", end = "2020-01-01", freq = 8)
+Import <- getDataSeries("TP.DT.TAR.IT.I", start = "1989-01-01", end = "2020-01-01", freq = 8)
+clabsi3 <- labs(title = "Agricultural Export-Import Quantity (Million USD)",
+               x = "Year", y = "",
+               caption = "Source: Central Bank of the Republic of Turkey")
+ggplot(Export, aes(x=time, y=TP.DT.TAR.IH.I, color= "Export Quantity")) + geom_line(size=1) + 
+   geom_line(data =Import, aes(y=TP.DT.TAR.IT.I, color= "Import Quantity"), size=1) + 
+   guides(colour = guide_legend("")) + theme_minimal() + clabsi3 + scale_color_manual(values = c("olivedrab4", "orange2"))
+
+```
+<p>&nbsp;</p>
+
+|   Overall, the change in the agricultural export has changed significantly throughout time. Agricultural sector had the capacity to meet 56.8% of total exports in 1980. This ratio decreased to 8.6% between the period of 1980-1995 and further decreased to 3.7% between the period of 1996-2017. This situation is mostly due to policies and agreements of trade liberalization such as URTN and CUA. It also affects agricultural import in a sense that the share of agriculture in imports was 1% in 1980 whereas this share increased to 3.7% in 2017. In _graph 21_ above, agricultural export and important quantities are presented. We can observe that Turkey was a net exporter of agricultural goods until 1995. Then its position of net exporter fluctuated between 1996-2006. After 2007, Turkey became a net importer of agricultural goods. The drought and the global food crises that took place in the years of 2007-2008 had an impact on the export-import activities on Turkey. With the decreased production caused by drought and increased instabilities of global food markets, Turkey’s imports in agriculture increased significantly around 2007-2008. In addition, beside the agreements that are mentioned above, many free trade agreements with other countries also took place between 1999-2008 period. These further liberalization acts contributed to structural changes that occurred in Turkish agricultural trade.
+<p>&nbsp;</p>
+
